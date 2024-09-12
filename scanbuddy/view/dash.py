@@ -144,148 +144,39 @@ class View:
             }
         )   
 
-        metrics_card = dbc.Card(
-            [
-                dbc.CardBody(
-                    [
-                        html.H5(
-                            "Motion Metrics", 
-                            className="card-title", 
-                            style={
-                                "borderBottom": "1px solid black", 
-                                "marginBottom": "0px", 
-                                "textAlign": "center", 
-                                "padding": "1rem",
-                                "fontSize": "1.5vw"
-                            }
-                        ),
-                        dbc.Row(
-                            [
-                                dbc.Col(
-                                    "Number of Volumes", 
-                                    width=8,
-                                    style={
-                                        "borderRight": "1px solid black", 
-                                        "borderBottom": "1px solid black", 
-                                        "display": "flex", 
-                                        "alignItems": "center", 
-                                        "justifyContent": "flex-end",
-                                        "paddingRight": "5px",
-                                        "fontSize": "1.1vw"
-                                    }
-                                ),
-                                dbc.Col(
-                                    id='number-of-vols', 
-                                    children="0", 
-                                    width=4, 
-                                    style={
-                                        "borderBottom": "1px solid black", 
-                                        "textAlign": "center", 
-                                        "padding": "1rem",
-                                        "fontSize": "1.5vw"
-                                    }
-                                )
-                            ],
-                            style={"margin": "0px"}
-                        ),
-                        dbc.Row(
-                            [
-                                dbc.Col(
-                                    "Movements > .5 mm", 
-                                    width=8,
-                                    style={
-                                        "borderRight": "1px solid black", 
-                                        "borderBottom": "1px solid black", 
-                                        "display": "flex", 
-                                        "alignItems": "center", 
-                                        "justifyContent": "flex-end",
-                                        "paddingRight": "5px",
-                                        "fontSize": "1.1vw"
-                                    }
-                                ),
-                                dbc.Col(
-                                    id='movements-05mm', 
-                                    children="0", 
-                                    width=4, 
-                                    style={
-                                        "borderBottom": "1px solid black", 
-                                        "textAlign": "center", 
-                                        "padding": "1rem",
-                                        "fontSize": "2vw"
-                                    }
-                                )
-                            ],
-                            style={"margin": "0px"}
-                        ),
-                        dbc.Row(
-                            [
-                                dbc.Col(
-                                    "Movements > 1 mm", 
-                                    width=8, 
-                                    style={
-                                        "borderRight": "1px solid black", 
-                                        "borderBottom": "1px solid black", 
-                                        "display": "flex", 
-                                        "alignItems": "center", 
-                                       "justifyContent": "flex-end",
-                                        "paddingRight": "5px",
-                                        "fontSize": "1.1vw"
-                                    }
-                                ),
-                                dbc.Col(
-                                    id='movements-1mm', 
-                                    children="0", 
-                                    width=4, 
-                                    style={
-                                        "borderBottom": "1px solid black", 
-                                        "textAlign": "center", 
-                                        "padding": "1rem",
-                                        "fontSize": "2vw"
-                                    }
-                                )
-                            ],
-                            style={"margin": "0px"}
-                        ),
-                        dbc.Row(
-                            [
-                                dbc.Col(
-                                    "Max Abs. Motion", 
-                                    width=8, 
-                                    style={
-                                        "borderRight": "1px solid black", 
-                                        "textAlign": "right", 
-                                        "display": "flex", 
-                                        "alignItems": "center", 
-                                        "justifyContent": "flex-end",
-                                        "paddingRight": "5px",
-                                        "fontSize": "1.2vw",
-                                        "borderBottom": "1px solid black"
-                                    }
-                                ),
-                                dbc.Col(
-                                    id='max-abs-motion', 
-                                    children="0", 
-                                    width=4, 
-                                    style={
-                                        "borderBottom": "1px solid black", 
-                                        "textAlign": "center", 
-                                        "padding": "1rem",
-                                        "fontSize": "1.25vw"
-                                    }
-                                )
-                            ],
-                            style={"margin": "0px"}
-                        ),
-                    ],
-                    style={"border": "1px solid black", "padding": "0"}
+        table_header = [
+            html.Thead(
+                html.Tr(
+                    html.Th(
+                        "Motion Metrics",
+                        colSpan=2,
+                        style={
+                            'textAlign': 'center'
+                        }
+                    )
                 )
-            ],
+            )
+        ]
+
+        row1 = html.Tr([html.Td("Volumes"), html.Td("400")])
+        row2 = html.Tr([html.Td("> 0.5 mm"), html.Td("100")])
+        row3 = html.Tr([html.Td("> 0.1 mm"), html.Td("1")])
+        row4 = html.Tr([html.Td("Max Abs Motion"), html.Td("42")])
+
+        table_body = [
+            html.Tbody([
+                row1,
+                row2,
+                row3,
+                row4
+            ])
+        ]
+        metrics_table = dbc.Table(
+            table_header + table_body,
+            bordered=True,
+            striped=True,
             style={
-                "width": "16vw", 
-                "maxWidth": "16vw", 
-                "border": "1px solid black", 
-                "backgroundColor": "#ffe4e1", 
-                "margin": "1rem"
+                'fontSize': '3.0vh'
             }
         )
 
@@ -293,7 +184,12 @@ class View:
             navbar,
             dbc.Row(
                 [
-                    dbc.Col(metrics_card, width=2, style={"marginTop": "50px"}),
+                    dbc.Col(
+                        metrics_table,
+                        style={
+                            'margin': '10px'
+                        }
+                    ),
                     dbc.Col(
                         [
                             displacements_graph,
