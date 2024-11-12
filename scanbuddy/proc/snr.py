@@ -23,9 +23,10 @@ class SNR:
         pub.subscribe(self.listener, 'snr')
 
 
-    def listener(self, tasks):
+    def listener(self, nii_path, tasks):
         logger.info('received tasks for snr calculation')
         self.snr_tasks = tasks
+        self._nii_path = nii_path
         #self._prev_snr = prev_snr
 
         self.run()
@@ -39,19 +40,26 @@ class SNR:
 
         logger.info(f'calculating slice means for volume {int(dcm.InstanceNumber)}')
 
-        snr_nii = self.run_dcm2niix(dcm)
+        #snr_nii = self.run_dcm2niix(dcm)
+
+
 
         #slice_means, mask = self.calculate_snr(dcm, snr_nii)
 
-        data_array, mask_threshold = self.calculate_snr(dcm, snr_nii)
+        #data_array = self.calculate_snr(dcm, snr_nii)
 
-        self.insert_snr(data_array, self.snr_tasks[0], mask_threshold)
+        data_array = self.get_nii_array()
 
-        self.clean_dir()
+        self.insert_snr(data_array, self.snr_tasks[0], None)
+
+        #self.clean_dir()
 
         elapsed = time.time() - start
 
         logger.info(f'snr processing took {elapsed} seconds')
+
+    def get_nii_array(self):
+        return nib.load(self._nii_path).get_fdata()
 
 
     def calculate_snr(self, first_dcm, snr_nii):
@@ -62,13 +70,13 @@ class SNR:
         take the average
         '''
 
-        mask_threshold = self.get_mask_threshold(first_dcm)
+        #mask_threshold = self.get_mask_threshold(first_dcm)
 
-        mask, data_array = self.generate_mask(mask_threshold, snr_nii)
+        data_array = self.generate_mask(0, snr_nii)
 
         #current_slice_means = self.slice_based_stats(data_array, mask)
 
-        return data_array, mask_threshold
+        return data_array
 
         '''
         if self._prev_snr == 0.0:
@@ -88,16 +96,27 @@ class SNR:
         x, y, z = slice_means.shape
         data_array_4d = slice_means.reshape(x, y, z, 1)
         task['slice_means'] = data_array_4d
-        task['mask_threshold'] = mask
+        #task['mask_threshold'] = mask
 
 
     def run_dcm2niix(self, dicom):
 
+        #pdb.set_trace()
+
         self._outdir = Path(os.path.dirname(self.snr_tasks[0]['path']), 'tmp_snr_dir')
         os.makedirs(self._outdir, exist_ok=True)
 
-        for idx, dicom in enumerate(self.snr_tasks):
-            shutil.copy(self.snr_tasks[idx]['path'], self._outdir)
+        #for idx, dicom in enumerate(self.snr_tasks):
+        #    shutil.copy(self.snr_tasks[idx]['path'], self._outdir)
+
+#        dcm2niix_cmd = [
+#           'dcm2niix',
+#           '-b', 'y',
+#           '-s', 'y'
+#           '-f', f'snr_calc',
+#           '-o', self._outdir,
+#           self._outdir
+#        ]
 
         dcm2niix_cmd = [
            'dcm2niix',
@@ -105,7 +124,7 @@ class SNR:
            '-s', 'y'
            '-f', f'snr_calc',
            '-o', self._outdir,
-           self._outdir
+           self.snr_tasks[0]['path']
         ]
 
         output = subprocess.check_output(dcm2niix_cmd, stderr=subprocess.STDOUT)
@@ -119,13 +138,15 @@ class SNR:
 
     def find_nii(self, directory):
         for file in os.listdir(directory):
-            if f'tmp_snr_dir' in file and file.endswith('.nii'):
+            #if f'{self.snr_tasks[0]['path']}' in file and file.endswith('.nii'):
+            if file.endswith('.nii'):
                 return Path(directory, file)
 
     def generate_mask(self, mask_threshold, nii):
         nii_array = nib.load(nii).get_fdata()
-        binary_mask = nii_array <= mask_threshold
-        return binary_mask, nii_array
+        #binary_mask = nii_array <= mask_threshold
+        #return binary_mask, nii_array
+        return nii_array
         '''
         keeping this code for posterity. maybe one day we will 
         want a pre-masked array

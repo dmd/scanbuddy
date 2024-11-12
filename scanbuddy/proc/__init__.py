@@ -3,8 +3,10 @@ import pdb
 import time
 import math
 import json
+import psutil
 import logging
 import threading
+import matplotlib
 import numpy as np
 from pubsub import pub
 from sortedcontainers import SortedDict
@@ -24,12 +26,13 @@ class Processor:
         logger.debug('received message to reset')
 
     def listener(self, ds, path):
-        key = int(ds.InstanceNumber)
-        self._instances[key] = {
+        self._key = int(ds.InstanceNumber)
+        self._instances[self._key] = {
             'path': path,
-            'volreg': None
+            'volreg': None,
+            'nii_path': None
         }
-        self._slice_means[key] = {
+        self._slice_means[self._key] = {
             'path': path,
             'slice_means': None,
             'mask_threshold': None
@@ -39,9 +42,9 @@ class Processor:
 
         num_vols = ds[(0x0020, 0x0105)].value
 
-        tasks = self.check_volreg(key)
+        tasks = self.check_volreg(self._key)
         ### edits need to be made here
-        snr_tasks = self.check_snr(key)
+        snr_tasks = self.check_snr(self._key)
         logger.debug('publishing message to volreg topic with the following tasks')
         logger.debug(json.dumps(tasks, indent=2))
         pub.sendMessage('volreg', tasks=tasks)
@@ -49,29 +52,31 @@ class Processor:
         pub.sendMessage('params', ds=ds)
         logger.debug(f'publishing message to snr topic')
         logger.debug(f'snr task sorted dict: {snr_tasks}')
-        pub.sendMessage('snr', tasks=snr_tasks)
+        pub.sendMessage('snr', nii_path=self._instances[self._key]['nii_path'], tasks=snr_tasks)
         logger.debug('after snr calculation')
 
         logger.debug(json.dumps(self._instances, indent=2))
 
-        if key == 1:
-            x, y, z, _ = self._slice_means[key]['slice_means'].shape
+        if self._key == 1:
+            self._mask_threshold = self.get_mask_threshold(ds)
+            x, y, z, _ = self._slice_means[self._key]['slice_means'].shape
 
             #self._fdata_array = np.zeros((x, y, z, num_vols))
             self._fdata_array = np.empty((x, y, z, num_vols))
+            self._numpy_4d_mask = np.zeros(self._fdata_array.shape, dtype=bool)
 
             logger.info(f'shape of zeros: {self._fdata_array.shape}')
-            logger.info(f'shape of first slice means: {self._slice_means[key]['slice_means'].shape}')
-            time.sleep(10)
+            logger.info(f'shape of first slice means: {self._slice_means[self._key]['slice_means'].shape}')
 
-        if key >= 5:
-            insert_position = key - 5
-            #self._fdata_array[:, :, :, insert_position] = self._slice_means[key]['slice_means']
-            self._fdata_array[:, :, :, insert_position] = self._slice_means[key]['slice_means'].squeeze()
+        if self._key >= 5:
+            #pdb.set_trace()
+            insert_position = self._key - 5
+            #self._fdata_array[:, :, :, insert_position] = self._slice_means[self._key]['slice_means']
+            self._fdata_array[:, :, :, insert_position] = self._slice_means[self._key]['slice_means'].squeeze()
 
-        #elif key > 5:
-            #self._fdata_array = np.concatenate((self._fdata_array, self._slice_means[key]['slice_means']), axis=3)
-        if key > 53:
+        #elif self._key > 5:
+            #self._fdata_array = np.concatenate((self._fdata_array, self._slice_means[self._key]['slice_means']), axis=3)
+        if self._key > 53 and (self._key % 3 == 0) and self._key < num_vols:
             #logger.info(f'shape of slice_means_array: {self._slice_means_array.shape}')
             logger.info(f'shape of fdata_array: {self._fdata_array.shape}')
             logger.info('publishing message to plot_snr topic')
@@ -80,7 +85,15 @@ class Processor:
             snr_thread.start()
             #snr_metric = round(self.calc_snr(), 2)
             #logger.info(f'running snr metric: {snr_metric}')
-            #pub.sendMessage('plot_snr', snr_metric=snr_metric)    
+            #pub.sendMessage('plot_snr', snr_metric=snr_metric)
+
+        if self._key == num_vols:
+            #snr_thread.stop()
+            logger.info('RUNNING FINAL SNR CALCULATION')
+            snr_metric = round(self.calc_snr(), 2)
+            logger.info(f'running snr metric: {snr_metric}')
+            pub.sendMessage('plot_snr', snr_metric=snr_metric)
+
             
         logger.debug(f'after volreg')
         logger.debug(json.dumps(self._instances, indent=2))
@@ -100,7 +113,7 @@ class Processor:
         tasks = list()
         current = self._instances[key]
 
-        # get numerical index of key O(log n)
+        # get numerical index of self._key O(log n)
         i = self._instances.bisect_left(key)
 
         # always register current node to left node
@@ -159,7 +172,10 @@ class Processor:
 
         data = self.generate_mask()
         mask = np.ma.getmask(data)
-        dim_x, dim_y, dim_z, dim_t = data.shape
+        #dim_x, dim_y, dim_z, dim_t = data.shape
+        dim_x, dim_y, dim_z, _ = data.shape
+
+        dim_t = self._key - 4
 
         slice_intensity_means = np.zeros( (dim_z,dim_t) )
         slice_voxel_counts = np.zeros( (dim_z), dtype='uint32' )
@@ -178,26 +194,47 @@ class Processor:
 
     def generate_mask(self):
 
-        mean_data = np.mean(self._fdata_array, axis=3)
+        mean_data = np.mean(self._fdata_array[..., :self._key-4], axis=3)
+
+        #pdb.set_trace()
 
         numpy_3d_mask = np.zeros(mean_data.shape, dtype=bool)
 
-        to_mask = (mean_data <= self._slice_means[5]['mask_threshold'])
+        to_mask = (mean_data <= self._mask_threshold)
 
         mask_lower_count = int(to_mask.sum())
 
         numpy_3d_mask = numpy_3d_mask | to_mask
 
-        numpy_4d_mask = np.zeros(self._fdata_array.shape, dtype=bool)
+        #numpy_4d_mask = np.zeros(self._fdata_array[..., :self._key-4].shape, dtype=bool)
 
-        numpy_4d_mask[numpy_3d_mask] = 1
+        self._numpy_4d_mask[numpy_3d_mask] = 1
 
-        masked_data = np.ma.masked_array(self._fdata_array,mask=numpy_4d_mask)
+        masked_data = np.ma.masked_array(self._fdata_array[..., :self._key-4], mask=self._numpy_4d_mask[..., :self._key-4])
 
         return masked_data
 
 
+    def get_mask_threshold(self, ds):
+        bits_stored = ds.get('BitsStored', None)
+        receive_coil = self.find_coil(ds)
 
+        if bits_stored == 12:
+            logger.debug(f'scan has "{bits_stored}" bits and receive coil "{receive_coil}", setting mask threshold to 150.0')
+            return 150.0
+        if bits_stored == 16:
+            if receive_coil in ['Head_32']:
+                logger.debug(f'scan has "{bits_stored}" bits and receive coil "{receive_coil}", setting mask threshold to 1500.0')
+                return 1500.0
+            if receive_coil in ['Head_64', 'HeadNeck_64']:
+                logger.debug(f'scan has "{bits_stored}" bits and receive coil "{receive_coil}", setting mask threshold to 3000.0')
+                return 3000.0
+        raise MaskThresholdError(f'unexpected bits stored "{bits_stored}" + receive coil "{receive_coil}"')
+
+    def find_coil(self, ds):
+        seq = ds[(0x5200, 0x9229)][0]
+        seq = seq[(0x0018, 0x9042)][0]
+        return seq[(0x0018, 0x1250)].value
 
 
         #pdb.set_trace()
@@ -320,9 +357,9 @@ class Processor:
 
     def check_snr(self, key):
         tasks = list()
-        current = self._slice_means[key]
+        current = self._slice_means[self._key]
 
-        current_idx = self._slice_means.bisect_left(key)
+        current_idx = self._slice_means.bisect_left(self._key)
 
         try:
             value = self._slice_means.values()[current_idx]
@@ -350,12 +387,12 @@ class Processor:
         if len(self._instances) == self._snr_interval:
             prev_snr = 0.0
         else:
-            for key in reversed(self._instances.keys()):
-                if self._instances[key]['snr'] is None:
+            for self._key in reversed(self._instances.self._keys()):
+                if self._instances[self._key]['snr'] is None:
                     continue
                 else:
-                    prev_snr = float(self._instances[key]['snr'])
-                    logger.info(f'found previously calculated snr at index {key}')
+                    prev_snr = float(self._instances[self._key]['snr'])
+                    logger.info(f'found previously calculated snr at index {self._key}')
                     return tasks, prev_snr
         '''
 
