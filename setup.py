@@ -19,7 +19,8 @@ requires = [
     'jsonpath-ng',
     'dash_auth',
     'nibabel',
-    'psutil'
+    'psutil',
+    'matplotlib'
 ]
 
 about = dict()

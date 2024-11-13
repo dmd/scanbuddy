@@ -1,3 +1,4 @@
+import os
 import sys
 import pdb
 import time
@@ -9,6 +10,7 @@ import threading
 import matplotlib
 import numpy as np
 from pubsub import pub
+import matplotlib.pyplot as plt
 from sortedcontainers import SortedDict
 
 logger = logging.getLogger(__name__)
@@ -42,6 +44,48 @@ class Processor:
 
         num_vols = ds[(0x0020, 0x0105)].value
 
+        #if self._key == 1:
+
+            #self._plot_dict = dict.fromkeys(range(1, num_vols+1), None)
+
+        data_path = os.path.dirname(os.path.dirname(os.path.dirname(path)))
+
+        #logger.info(f'data path {data_path}')
+
+        num_dicoms = len([name for name in os.listdir(data_path) if name.endswith('.dcm')])
+
+        if num_dicoms > 0:
+            self._snr_interval = 100
+        else:
+            self._snr_interval = 5
+
+#        interval_mapping = {
+#            0: 2,
+#            1: 3,
+#            2: 4,
+#            3: 5,
+#            4: 6,
+#            5: 7,
+#            6: 8
+#        }  
+#            if self._key == 1:
+#                self._snr_interval = 1
+#            else:
+#                self._snr_interval = self.get_snr_interval(num_dicoms)
+        #if num_dicoms > 1:
+            #self._snr_interval     
+
+        #self._snr_interval = interval_mapping.get(num_dicoms, 9)
+
+        logger.info(f'CURRENT SNR INTERVAL {self._snr_interval}')
+
+
+        #self._plot_dict[self._key] = num_dicoms
+
+        #self._plot_dict[self._key] = psutil.cpu_percent()
+
+        #pdb.set_trace()
+
         tasks = self.check_volreg(self._key)
         ### edits need to be made here
         snr_tasks = self.check_snr(self._key)
@@ -56,6 +100,8 @@ class Processor:
         logger.debug('after snr calculation')
 
         logger.debug(json.dumps(self._instances, indent=2))
+
+
 
         if self._key == 1:
             self._mask_threshold = self.get_mask_threshold(ds)
@@ -76,7 +122,7 @@ class Processor:
 
         #elif self._key > 5:
             #self._fdata_array = np.concatenate((self._fdata_array, self._slice_means[self._key]['slice_means']), axis=3)
-        if self._key > 53 and (self._key % 3 == 0) and self._key < num_vols:
+        if self._key > 53 and (self._key % self._snr_interval == 0) and self._key < num_vols:
             #logger.info(f'shape of slice_means_array: {self._slice_means_array.shape}')
             logger.info(f'shape of fdata_array: {self._fdata_array.shape}')
             logger.info('publishing message to plot_snr topic')
@@ -89,10 +135,24 @@ class Processor:
 
         if self._key == num_vols:
             #snr_thread.stop()
-            logger.info('RUNNING FINAL SNR CALCULATION')
+            logger.debug('RUNNING FINAL SNR CALCULATION')
             snr_metric = round(self.calc_snr(), 2)
             logger.info(f'running snr metric: {snr_metric}')
             pub.sendMessage('plot_snr', snr_metric=snr_metric)
+
+            #matplotlib.use('Agg')
+
+            #x, y, z, _ = self._slice_means[self._key]['slice_means'].shape
+
+            #plt.figure(figsize=(10, 6))
+            #plt.plot(self._plot_dict.keys(), self._plot_dict.values(), marker='o', linestyle='-', color='b')
+            #plt.title(f"Dimensions: {x}x{y}x{z}")
+            #plt.xlabel("Volume Number")
+            #plt.ylabel("Processing Time")
+
+            #plt.savefig('/Users/danielasay/Desktop/star_num_dicoms.png')
+
+
 
             
         logger.debug(f'after volreg')
@@ -105,9 +165,20 @@ class Processor:
         pub.sendMessage('plot', instances=self._instances, subtitle_string=subtitle_string)
 
     def calculate_and_publish_snr(self):
+        start = time.time()
         snr_metric = round(self.calc_snr(), 2)
+        elapsed = time.time() - start
+        #self._plot_dict[self._key] = elapsed
+        logger.info(f'snr calculation took {elapsed} seconds')
         logger.info(f'running snr metric: {snr_metric}')
-        pub.sendMessage('plot_snr', snr_metric=snr_metric) 
+        pub.sendMessage('plot_snr', snr_metric=snr_metric)
+
+    def get_snr_interval(self, num_dicoms):
+        if num_dicoms == 0:
+            return max(self._snr_interval - 1, 2)
+        if num_dicoms > 1:
+            return self._snr_interval + 1
+
 
     def check_volreg(self, key):
         tasks = list()
