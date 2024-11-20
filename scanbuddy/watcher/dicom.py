@@ -4,6 +4,7 @@ import time
 import shutil
 import logging
 import pydicom
+import multiprocessing
 from pubsub import pub
 from retry import retry
 from pathlib import Path
@@ -55,6 +56,10 @@ class DicomHandler(PatternMatchingEventHandler):
             path = self.construct_path(path, ds)
             logger.info(f'publishing message to topic=incoming with ds={path}')
             pub.sendMessage('incoming', ds=ds, path=path)
+            #multiprocessing.set_start_method('spawn')
+            #snr_process = multiprocessing.Process(target=pub.sendMessage('proc-snr', ds=ds))
+            #snr_process.start()
+            #pub.sendMessage('proc-snr', ds=ds)
         except InvalidDicomError as e:
             logger.info(f'not a dicom file {path}')
         except FileNotFoundError as e:

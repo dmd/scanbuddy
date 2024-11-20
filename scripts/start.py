@@ -16,7 +16,8 @@ from scanbuddy.broker.redis import MessageBroker
 from scanbuddy.config import Config
 
 logger = logging.getLogger('main')
-logging.basicConfig(level=logging.INFO)
+FORMAT = '%(process)d %(message)s'
+logging.basicConfig(level=logging.INFO, format=FORMAT)
 
 def main():
     parser = ArgumentParser()

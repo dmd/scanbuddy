@@ -45,7 +45,7 @@ class SNR:
 
         self.insert_snr(data_array, self.snr_tasks[0], None)
 
-        self.clean_dir()
+        self.clean_dir(instance_num)
 
         elapsed = time.time() - start
 
@@ -69,7 +69,9 @@ class SNR:
 
         return ds1
 
-    def clean_dir(self):
+    def clean_dir(self, instance_num):
+        if instance_num == 1:
+            return
         for file in glob.glob(f'{os.path.dirname(self._nii_path)}/*.json'):
             os.remove(file)
         for file in glob.glob(f'{os.path.dirname(self._nii_path)}/*.nii'):
