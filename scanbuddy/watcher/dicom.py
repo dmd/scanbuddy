@@ -4,6 +4,7 @@ import time
 import shutil
 import logging
 import pydicom
+import datetime
 import multiprocessing
 from pubsub import pub
 from retry import retry
@@ -15,11 +16,12 @@ from watchdog.events import PatternMatchingEventHandler
 logger = logging.getLogger(__name__)
 
 class DicomWatcher:
-    def __init__(self, directory):
+    def __init__(self, directory, pool):
         self._directory = directory
+        self._pool = pool
         self._observer = PollingObserver(timeout=.01)
         self._observer.schedule(
-            DicomHandler(ignore_directories=True),
+            DicomHandler(pool=pool,ignore_directories=True),
             directory
         )
 
@@ -44,6 +46,10 @@ class DicomWatcher:
             pass
 
 class DicomHandler(PatternMatchingEventHandler):
+    def __init__(self, pool, **kwargs):
+        super().__init__(**kwargs)
+        self._pool = pool
+
     def on_created(self, event):
         path = Path(event.src_path)
         try:
@@ -59,7 +65,9 @@ class DicomHandler(PatternMatchingEventHandler):
             #multiprocessing.set_start_method('spawn')
             #snr_process = multiprocessing.Process(target=pub.sendMessage('proc-snr', ds=ds))
             #snr_process.start()
-            #pub.sendMessage('proc-snr', ds=ds)
+            logger.info(f'time when publishing to snr_controller topic: {datetime.datetime.now()}')
+            pub.sendMessage('proc-snr', pool=self._pool, ds=ds)
+
         except InvalidDicomError as e:
             logger.info(f'not a dicom file {path}')
         except FileNotFoundError as e:

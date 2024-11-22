@@ -6,6 +6,7 @@ import logging
 from pubsub import pub
 from pathlib import Path
 from argparse import ArgumentParser
+import multiprocessing as mp
 from scanbuddy.watcher.directory import DirectoryWatcher
 from scanbuddy.proc import Processor
 from scanbuddy.proc.volreg import VolReg
@@ -16,8 +17,9 @@ from scanbuddy.broker.redis import MessageBroker
 from scanbuddy.config import Config
 
 logger = logging.getLogger('main')
-FORMAT = '%(process)d %(message)s'
+FORMAT = '%(process)d %(asctime)s %(message)s'
 logging.basicConfig(level=logging.INFO, format=FORMAT)
+mp.set_start_method('fork')
 
 def main():
     parser = ArgumentParser()
@@ -33,8 +35,11 @@ def main():
 
     config = Config(args.config)
 
+    cpus = 1
+    pool = mp.Pool(cpus)
+
     broker = MessageBroker()
-    watcher = DirectoryWatcher(args.folder)
+    watcher = DirectoryWatcher(args.folder, pool)
     processor = Processor()
     params = Params(
         broker=broker,

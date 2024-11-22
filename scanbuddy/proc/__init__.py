@@ -7,12 +7,14 @@ import json
 import psutil
 import logging
 import pydicom
+import datetime
 import matplotlib
 import numpy as np
 from pubsub import pub
-import multiprocessing
+import multiprocessing as mp
 import matplotlib.pyplot as plt
 from sortedcontainers import SortedDict
+from multiprocessing import shared_memory
 
 logger = logging.getLogger(__name__)
 
@@ -21,8 +23,7 @@ class Processor:
         self.reset()
         pub.subscribe(self.reset, 'reset')
         pub.subscribe(self.listener, 'incoming')
-        pub.subscribe(self.snr_controller, 'proc-snr')
-        multiprocessing.set_start_method('fork')
+        pub.subscribe(self.snr_receiver, 'proc-snr')
 
 
     def reset(self):
@@ -44,10 +45,12 @@ class Processor:
             'mask_threshold': None,
             'mask': None
         }
+
         logger.debug('current state of instances')
         logger.debug(json.dumps(self._instances, default=list, indent=2))
 
         num_vols = ds[(0x0020, 0x0105)].value
+
 
         data_path = os.path.dirname(os.path.dirname(os.path.dirname(path)))
 
@@ -58,6 +61,7 @@ class Processor:
         else:
             self._snr_interval = 1
 
+        self._mask_threshold, self._decrement = self.get_mask_threshold(ds)
 
         logger.info(f'CURRENT SNR INTERVAL {self._snr_interval}')
 
@@ -82,8 +86,16 @@ class Processor:
         pub.sendMessage('snr', nii_path=self._instances[self._key]['nii_path'], tasks=snr_tasks)
         logger.debug('after snr calculation')
 
-        snr_process = multiprocessing.Process(target=self.snr_controller, args=(ds,))
-        snr_process.start()
+
+        #cpus = 1
+        #pool = mp.Pool(cpus)
+
+        #pool.apply_async(self.snr_controller, (ds,))
+        #snr_process.start()
+
+        if self._key == 1:
+            x, y, z, _ = self._slice_means[self._key]['slice_means'].shape
+            self._slice_intensity_means = np.zeros( (z, num_vols) )
 
 
         logger.debug(json.dumps(self._instances, indent=2))
@@ -97,55 +109,97 @@ class Processor:
         subtitle_string = f'{project} • {session} • {scandesc} • {scannum}'
         pub.sendMessage('plot', instances=self._instances, subtitle_string=subtitle_string)
 
-        
+        #time.sleep(5)
+
+        self._main_pid = os.getpid()
+        #logger.info(f'main pid: {self._main_pid}')
+
+
+    def snr_receiver(self, pool, ds):
+        logger.info(f"time when snr_receiver is entered: {datetime.datetime.now()}")
+        pool.apply_async(self.snr_controller, (ds,))
+        logger.info(f'time after apply_async has been called: {datetime.datetime.now()}')
 
 
     def snr_controller(self, ds):
 
-            
+            logger.info(f"time when snr_controller is entered: {datetime.datetime.now()}")
             logger.info(f'received snr controller topic notification')
 
             key = int(ds.InstanceNumber)
             num_vols = ds[(0x0020, 0x0105)].value
 
+            #self._mask_threshold, self._decrement = self.get_mask_threshold(ds)
+            _, _, self._z, _ = self._slice_means[key]['slice_means'].shape
+            #self._z = z
+            self._num_vols = num_vols
+
             if key == 1:
-                self._mask_threshold, self._decrement = self.get_mask_threshold(ds)
+                #self._mask_threshold, self._decrement = self.get_mask_threshold(ds)
+                
                 x, y, z, _ = self._slice_means[key]['slice_means'].shape
 
-                self._prev_mask = None
-                self._slices_to_update = None
+                #self._prev_mask = None
+                #self._slices_to_update = None
 
+                #logger.info('ok up to here')
 
+                slice_intensity_means_size = z * num_vols
+                #logger.info('creating slice_intensity_means_size ok')
+                slice_intensity_means = shared_memory.SharedMemory(name='slice_intensity_means', create=True, size=slice_intensity_means_size * np.dtype(np.float64).itemsize)
+                #logger.info('allocating slice_intensity_means successfully')
+                #slice_intensity_means = np.zeros( (z, num_vols) )
 
-                self._z = z
-                self._num_vols = num_vols
+                shm_size = x * y * z * num_vols
+                shm = shared_memory.SharedMemory(name='fdata', create=True, size=shm_size * np.dtype(np.float64).itemsize)
+                #fdata_array = np.ndarray((x, y, z, num_vols), dtype=np.float64, buffer=shm.buf)
 
-                self._slice_intensity_means = np.zeros( (z, num_vols) )
+                #self._fdata_array = np.empty((x, y, z, num_vols))
 
-                self._fdata_array = np.empty((x, y, z, num_vols))
-
-                logger.info(f'shape of zeros: {self._fdata_array.shape}')
+                #logger.info(f'shape of zeros: {self._fdata_array.shape}')
                 logger.info(f'shape of first slice means: {self._slice_means[key]['slice_means'].shape}')
 
             if key >= 5:
+                x, y, z, _ = self._slice_means[key]['slice_means'].shape
+                num_vols = ds[(0x0020, 0x0105)].value
                 insert_position = key - 5
-                self._fdata_array[:, :, :, insert_position] = self._slice_means[key]['slice_means'].squeeze()
+                fdata_mem = shared_memory.SharedMemory(name='fdata')
+                fdata_array = np.ndarray((x, y, z, num_vols), dtype=np.float64, buffer=fdata_mem.buf)
+
+                logger.info('reading in fdata from shared memory')
+                slice_intensiy_means_mem = shared_memory.SharedMemory(name='slice_intensity_means')
+                slice_intensity_means = np.ndarray((z, num_vols), dtype=np.float64, buffer=slice_intensiy_means_mem.buf)
+                
+                #logger.info(f'status of fdata array pre-insertion: {fdata_array[:,:,:,:insert_position]}')
+                #logger.info(f'value of slice means at key {key}: {self._slice_means[key]['slice_means']}')
+                fdata_array[:, :, :, insert_position] = self._slice_means[key]['slice_means'].squeeze()
+                #logger.info(f'status of fdata array post-insertion: {fdata_array[:,:,:,:insert_position]}')
+                #logger.info(f'inserting new data into fdata array')
+
+                #slice_means_mem = shared_memory.SharedMemory(name='slice_means')
+                #slice_means_array = np.ndarray((x, y, z, num_vols), dtype=np.float64, buffer=slice_means_mem)
+                #logger.info(f'fdata array after being read in from shared memory: {fdata_array}')
+                
+                #logger.info(f"value of fdata_array at key {key}: {fdata_array[:,:,:,:key-5]}")
+
+
 
             if key > 53 and (key % 1 == 0) and key < num_vols:
-                logger.info(f'shape of fdata_array: {self._fdata_array.shape}')
+                #logger.info(f'making it inside snr calc portion')
+                #logger.info(f'shape of fdata_array: {fdata_array.shape}')
                 logger.info('publishing message to plot_snr topic')
 
             #snr_thread = threading.Thread(target=self.calculate_and_publish_snr)
             #snr_thread.start()
             #snr_process.join()
-                self.calculate_and_publish_snr(key)
+                self.calculate_and_publish_snr(key, fdata_array, slice_intensity_means)
             #snr_metric = round(self.calc_snr(), 2)
             #logger.info(f'running snr metric: {snr_metric}')
             #pub.sendMessage('plot_snr', snr_metric=snr_metric)
 
             if key == num_vols:
                 logger.debug('RUNNING FINAL SNR CALCULATION')
-                snr_metric = round(self.calc_snr(key), 2)
+                snr_metric = round(self.calc_snr(key, fdata_array, slice_intensity_means), 2)
                 logger.info(f'final snr metric: {snr_metric}')
                 pub.sendMessage('plot_snr', snr_metric=snr_metric)
 
@@ -161,9 +215,10 @@ class Processor:
             '''
 
 
-    def calculate_and_publish_snr(self, key):
+    def calculate_and_publish_snr(self, key, fdata_array, slice_intensity_means):
+        #logger.info('making it inside calculate_and_publish_snr')
         start = time.time()
-        snr_metric = round(self.calc_snr(key), 2)
+        snr_metric = round(self.calc_snr(key, fdata_array, slice_intensity_means), 2)
         elapsed = time.time() - start
         #self._plot_dict[self._key] = elapsed
         logger.info(f'snr calculation took {elapsed} seconds')
@@ -172,8 +227,8 @@ class Processor:
             logger.info(f'snr is a nan, decrementing mask threshold by {self._decrement}')
             self._mask_threshold = self._mask_threshold - self._decrement
             logger.info(f'new threshold: {self._mask_threshold}')
-            self._numpy_4d_mask = np.zeros(self._fdata_array.shape, dtype=bool)
-            self._slice_intensity_means = np.zeros( (self._z, self._num_vols) )
+            self._numpy_4d_mask = np.zeros(fdata_array.shape, dtype=bool)
+            slice_intensity_means = np.zeros( (self._z, self._num_vols) )
         else:
             pub.sendMessage('plot_snr', snr_metric=snr_metric)
 
@@ -211,9 +266,11 @@ class Processor:
 
         return tasks
 
-    def calc_snr(self, key):
+    def calc_snr(self, key, fdata_array, slice_intensity_means_1):
 
-        slice_intensity_means, slice_voxel_counts, data = self.get_mean_slice_intensitites(key)
+        logger.info('making to inside calc_snr')
+
+        slice_intensity_means, slice_voxel_counts, data = self.get_mean_slice_intensitites(key, fdata_array, slice_intensity_means_1)
 
 
 
@@ -258,19 +315,21 @@ class Processor:
         return slice_weighted_snr_mean / total_voxel_count
 
 
-    def get_mean_slice_intensitites(self, key):
+    def get_mean_slice_intensitites(self, key, fdata_array, slice_intensity_means):
 
-        data = self.generate_mask(key)
+        data = self.generate_mask(key, fdata_array)
         mask = np.ma.getmask(data)
         #dim_x, dim_y, dim_z, dim_t = data.shape
         dim_x, dim_y, dim_z, _ = data.shape
 
         dim_t = key - 4
 
+        logger.info('making it through generate_mask')
+
         #slices_to_update = list()
 
         if key > 54:
-            differing_slices = self.find_mask_differences(key)
+            differing_slices = self.find_mask_differences(key, fdata_array, slice_means_array)
             #pdb.set_trace()
 
         #home_dir = os.path.expanduser("~")
@@ -285,7 +344,7 @@ class Processor:
         #pdb.set_trace()
 
         #column_sums = np.sum(array, axis=0)
-        zero_columns = np.where(np.all(self._slice_intensity_means[:,:dim_t] == 0, axis=0))[0].tolist()
+        zero_columns = np.where(np.all(slice_intensity_means[:,:dim_t] == 0, axis=0))[0].tolist()
 
         logger.info(zero_columns)
 
@@ -293,7 +352,7 @@ class Processor:
             for volume_idx in zero_columns:
                 for slice_idx in range(dim_z):
                     slice_data = data[:,:,slice_idx,volume_idx]
-                    self._slice_intensity_means[slice_idx,volume_idx] = slice_data.mean()
+                    slice_intensity_means[slice_idx,volume_idx] = slice_data.mean()
         else:
 
         #    pdb.set_trace()
@@ -305,7 +364,7 @@ class Processor:
                     #whole_slice_mean = self._slice_intensity_means[:,volume_idx-1].mean()
                     #pdb.set_trace()
                     #weighted_mean = (slice_vol_mean + whole_slice_mean) / (volume_idx+1)
-                    self._slice_intensity_means[slice_idx,volume_idx] = slice_vol_mean
+                    slice_intensity_means[slice_idx,volume_idx] = slice_vol_mean
 
             logger.info(f'recalculating slice means at the following slices: {differing_slices}')
             logger.info(f'total of {len(differing_slices)} new slices being computed')
@@ -316,7 +375,7 @@ class Processor:
                     for slice_idx in differing_slices:
                         slice_data = data[:,:,slice_idx,volume_idx]
                         slice_vol_mean = slice_data.mean()
-                        self._slice_intensity_means[slice_idx,volume_idx] = slice_vol_mean
+                        slice_intensity_means[slice_idx,volume_idx] = slice_vol_mean
                 #self._slice_intensity_means[slice_idx,volume_idx] = slice_data.mean()
 
         
@@ -342,7 +401,7 @@ class Processor:
 
         #self._slice_intensity_means_read[:,:dim_t] = slice_intensity_means
 
-        return self._slice_intensity_means[:, :dim_t], slice_voxel_counts, data
+        return slice_intensity_means[:, :dim_t], slice_voxel_counts, data
 
         #np.save(f'{home_dir}/slice_intensity_means.npy', slice_intensity_means_read)
 
@@ -394,9 +453,9 @@ class Processor:
         '''        
 
 
-    def generate_mask(self, key):
+    def generate_mask(self, key, fdata_array):
 
-        mean_data = np.mean(self._fdata_array[..., :key-4], axis=3)
+        mean_data = np.mean(fdata_array[..., :key-4], axis=3)
 
         numpy_3d_mask = np.zeros(mean_data.shape, dtype=bool)
 
@@ -406,11 +465,11 @@ class Processor:
 
         numpy_3d_mask = numpy_3d_mask | to_mask
 
-        numpy_4d_mask = np.zeros(self._fdata_array[..., :self._key-4].shape, dtype=bool)
+        numpy_4d_mask = np.zeros(fdata_array[..., :key-4].shape, dtype=bool)
 
         numpy_4d_mask[numpy_3d_mask] = 1
 
-        masked_data = np.ma.masked_array(self._fdata_array[..., :key-4], mask=numpy_4d_mask[..., :key-4])
+        masked_data = np.ma.masked_array(fdata_array[..., :key-4], mask=numpy_4d_mask[..., :key-4])
 
         mask = np.ma.getmask(masked_data)
 
